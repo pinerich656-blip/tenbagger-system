@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Iterable
+import traceback
 
 import yfinance as yf
 
@@ -12,11 +13,22 @@ DEFAULT_STOCKS: list[StockInput] = [
 ]
 
 def fetch_latest_price(code: str) -> float | None:
-    ticker = yf.Ticker(code)
-    hist = ticker.history(period="5d")
-    if hist.empty:
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="5d", auto_adjust=False)
+
+        if hist is None or hist.empty:
+            return None
+
+        closes = hist["Close"].dropna()
+        if closes.empty:
+            return None
+
+        return float(closes.iloc[-1])
+    except Exception:
+        print(f"[fetch_latest_price] failed for {code}")
+        print(traceback.format_exc())
         return None
-    return float(hist["Close"].dropna().iloc[-1])
 
 def classify_price(price: float, fair_price: float, danger_price: float) -> str:
     if price <= fair_price:
