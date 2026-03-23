@@ -15,16 +15,24 @@ DEFAULT_STOCKS: list[StockInput] = [
 def fetch_latest_price(code: str) -> float | None:
     try:
         ticker = yf.Ticker(code)
-        hist = ticker.history(period="5d", auto_adjust=False)
 
-        if hist is None or hist.empty:
-            return None
+        # まず通常の履歴取得
+        hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
 
-        closes = hist["Close"].dropna()
-        if closes.empty:
-            return None
+        if hist is not None and not hist.empty and "Close" in hist.columns:
+            closes = hist["Close"].dropna()
+            if not closes.empty:
+                return float(closes.iloc[-1])
 
-        return float(closes.iloc[-1])
+        # 履歴がダメなら fast_info を試す
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info:
+            last_price = fast_info.get("lastPrice") or fast_info.get("last_price")
+            if last_price:
+                return float(last_price)
+
+        return None
+
     except Exception:
         print(f"[fetch_latest_price] failed for {code}")
         print(traceback.format_exc())
@@ -44,6 +52,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
     for stock in targets:
         price = fetch_latest_price(stock.code)
         if price is None:
+            print(f"[analyze_stocks] skipped {stock.code} because price is None")
             continue
 
         fair_price = round(price * 0.80, 2)
