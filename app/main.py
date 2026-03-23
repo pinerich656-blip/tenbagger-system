@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 
 from .strategy import analyze_stocks
 
@@ -15,6 +16,7 @@ def root_head() -> Response:
     return Response(status_code=200)
 
 @app.get("/analyze")
-def analyze() -> list[dict]:
+def analyze():
     results = analyze_stocks()
-    return [item.model_dump() for item in results]
+    data = [item.model_dump() for item in results]
+    return JSONResponse(content=data, media_type="application/json; charset=utf-8")
