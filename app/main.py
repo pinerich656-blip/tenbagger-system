@@ -43,6 +43,9 @@ def buy_candidates():
 
 
 @app.get("/test-line")
-def test_line():
+def test_line(key: str):
+    if key != "1234":
+        return {"error": "unauthorized"}
+
     send_line_push("LINE通知テストです")
     return {"message": "test sent"}
