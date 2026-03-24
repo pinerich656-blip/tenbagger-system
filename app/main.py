@@ -40,3 +40,9 @@ def buy_candidates():
         send_line_push(msg)
 
     return JSONResponse(content=buys, media_type="application/json; charset=utf-8")
+
+
+@app.get("/test-line")
+def test_line():
+    send_line_push("LINE通知テストです")
+    return {"message": "test sent"}
