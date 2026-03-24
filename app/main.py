@@ -4,6 +4,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
 from .strategy import analyze_stocks
+from .notifications import send_line_push
 
 app = FastAPI(title="Tenbagger System API")
 
@@ -30,5 +31,12 @@ def buy_candidates():
         for item in results
         if item.status == "買い候補"
     ]
+
+    if buys:
+        msg = "【買い候補】\n"
+        for b in buys:
+            msg += f"{b['name']} ({b['code']}) {b['price']}円\n"
+
+        send_line_push(msg)
 
     return JSONResponse(content=buys, media_type="application/json; charset=utf-8")
