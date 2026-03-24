@@ -31,4 +31,4 @@ def buy_candidates():
         if item.status == "買い候補"
     ]
 
-    return buys
+    return JSONResponse(content=buys, media_type="application/json; charset=utf-8")
