@@ -55,7 +55,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
             print(f"[analyze_stocks] skipped {stock.code} because price is None")
             continue
 
-        fair_price = round(price * 0.80, 2)
+        fair_price = round(price * 0.90, 2)
         danger_price = round(price * 1.30, 2)
         status = classify_price(price, fair_price, danger_price)
 
