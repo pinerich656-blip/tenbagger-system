@@ -20,3 +20,15 @@ def analyze():
     results = analyze_stocks()
     data = [item.model_dump() for item in results]
     return JSONResponse(content=data, media_type="application/json; charset=utf-8")
+
+@app.get("/buy")
+def buy_candidates():
+    results = analyze_stocks()
+
+    buys = [
+        item.model_dump()
+        for item in results
+        if item.status == "買い候補"
+    ]
+
+    return buys
