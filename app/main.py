@@ -49,3 +49,24 @@ def test_line(key: str):
 
     send_line_push("LINE通知テストです")
     return {"message": "test sent"}
+
+@app.get("/run-buy-check")
+def run_buy_check(key: str):
+    if key != "1234":
+        return {"error": "unauthorized"}
+
+    results = analyze_stocks()
+
+    buys = [
+        item.model_dump()
+        for item in results
+        if item.status == "買い候補"
+    ]
+
+    if buys:
+        msg = "【買い候補】\n"
+        for b in buys:
+            msg += f"{b['name']} ({b['code']}) {b['price']}円\n"
+        send_line_push(msg)
+
+    return {"count": len(buys), "items": buys}
