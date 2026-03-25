@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: tenbagger-system
+    runtime: docker
+    repo: https://github.com/pinerich656-blip/tenbagger-system
+    plan: free
+
+  - type: cron
+    name: tenbagger-auto
+    runtime: docker
+    repo: https://github.com/pinerich656-blip/tenbagger-system
+    plan: starter
+    schedule: "0 23 * * *"
+    dockerCommand: /bin/sh -c "python -c \"import requests; print(requests.get('https://tenbagger-system.onrender.com/run-buy-check?key=buycheck_2026_yutaka_9x7pL2', timeout=60).text)\""
