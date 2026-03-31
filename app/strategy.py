@@ -24,10 +24,13 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
 
 import requests
 from bs4 import BeautifulSoup
+import time
 
 
 def fetch_price_data(code: str) -> dict | None:
     try:
+        time.sleep(1)
+
         code_clean = code.replace(".T", "")
         url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
@@ -38,11 +41,17 @@ def fetch_price_data(code: str) -> dict | None:
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        price_tag = soup.select_one("span[class*='_3rXWJKZF'], span[class*='Price']")
+        # ① メイン
+        price_tag = soup.select_one("span[class*='_3rXWJKZF']")
+
+        # ② フォールバック
+        if not price_tag:
+            price_tag = soup.select_one("span[class*='Price']")
+
         if not price_tag:
             return None
 
-        price = float(price_tag.text.replace(",", ""))
+        price = float(price_tag.text.replace(",", "").replace("円", ""))
 
         return {
             "current_price": price,
