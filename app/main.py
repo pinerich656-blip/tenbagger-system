@@ -78,3 +78,7 @@ def run_buy_check(key: str):
         send_line_push(msg)
 
     return {"count": len(buys), "items": buys}
+
+@app.get("/version")
+def version():
+    return {"version": "debug-2026-04-01-1"}
