@@ -18,22 +18,38 @@ def fetch_price_data(code: str):
         ticker = yf.Ticker(code)
         hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
 
-        if hist is None or hist.empty:
-            return None
+        if hist is not None and not hist.empty and "Close" in hist.columns:
+            closes = hist["Close"].dropna()
+            if not closes.empty:
+                current_price = float(closes.iloc[-1])
+                month_low = float(closes.min())
+                month_high = float(closes.max())
 
-        closes = hist["Close"].dropna()
-        if closes.empty:
-            return None
+                return {
+                    "current_price": current_price,
+                    "month_low": month_low,
+                    "month_high": month_high,
+                }
 
-        current_price = float(closes.iloc[-1])
-        month_low = float(closes.min())
-        month_high = float(closes.max())
+        # 履歴が取れないときの予備ルート
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info:
+            last_price = fast_info.get("lastPrice") or fast_info.get("last_price")
+            day_low = fast_info.get("dayLow") or fast_info.get("day_low")
+            day_high = fast_info.get("dayHigh") or fast_info.get("day_high")
 
-        return {
-            "current_price": current_price,
-            "month_low": month_low,
-            "month_high": month_high,
-        }
+            if last_price:
+                current_price = float(last_price)
+                month_low = float(day_low) if day_low else current_price * 0.95
+                month_high = float(day_high) if day_high else current_price * 1.05
+
+                return {
+                    "current_price": current_price,
+                    "month_low": month_low,
+                    "month_high": month_high,
+                }
+
+        return None
 
     except Exception:
         print(f"[fetch_price_data] failed for {code}")
