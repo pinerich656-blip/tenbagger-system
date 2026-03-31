@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from typing import Iterable
-import traceback
+import requests
 
-import yfinance as yf
-
+from .config import settings
 from .models import StockAnalysis, StockInput
 
 DEFAULT_STOCKS: list[StockInput] = [
-    StockInput(name="ランディックス", code="2981.T"),
-    StockInput(name="リアルゲイト", code="5532.T"),
-    StockInput(name="ブロードエンタープライズ", code="4415.T"),
-    StockInput(name="ガーデン", code="274A.T"),
+    StockInput(name="ランディックス", code="2981"),
+    StockInput(name="リアルゲイト", code="5532"),
+    StockInput(name="ブロードエンタープライズ", code="4415"),
+    StockInput(name="ガーデン", code="274A"),
 ]
+
+BASE_URL = "https://api.twelvedata.com"
+
+
+def td_symbol(code: str) -> str:
+    # 日本株はまず TSE 扱いで取りに行く
+    return f"{code}:TSE"
 
 
 def classify_price(price: float, buy_line: float, danger_line: float) -> str:
@@ -23,41 +29,73 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     return "様子見"
 
 
-def fetch_single_price_data(code: str) -> dict | None:
+def fetch_price_data(code: str) -> dict | None:
+    if not settings.twelve_data_api_key:
+        return None
+
+    symbol = td_symbol(code)
+
     try:
-        ticker = yf.Ticker(code)
+        # まず日足の履歴を取る
+        ts_resp = requests.get(
+            f"{BASE_URL}/time_series",
+            params={
+                "symbol": symbol,
+                "interval": "1day",
+                "outputsize": 30,
+                "apikey": settings.twelve_data_api_key,
+            },
+            timeout=20,
+        )
+        ts_data = ts_resp.json()
 
-        hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
-        if hist is not None and not hist.empty and "Close" in hist.columns:
-            closes = hist["Close"].dropna()
-            if not closes.empty:
-                return {
-                    "current_price": float(closes.iloc[-1]),
-                    "month_low": float(closes.min()),
-                    "month_high": float(closes.max()),
-                }
+        values = ts_data.get("values", [])
+        closes: list[float] = []
 
-        fast_info = getattr(ticker, "fast_info", None)
-        if fast_info:
-            last_price = fast_info.get("lastPrice") or fast_info.get("last_price")
-            day_low = fast_info.get("dayLow") or fast_info.get("day_low")
-            day_high = fast_info.get("dayHigh") or fast_info.get("day_high")
+        for row in values:
+            close_val = row.get("close")
+            if close_val is None:
+                continue
+            try:
+                closes.append(float(close_val))
+            except (TypeError, ValueError):
+                continue
 
-            if last_price:
-                current_price = float(last_price)
-                month_low = float(day_low) if day_low else current_price * 0.97
-                month_high = float(day_high) if day_high else current_price * 1.08
-                return {
-                    "current_price": current_price,
-                    "month_low": month_low,
-                    "month_high": month_high,
-                }
+        if closes:
+            current_price = closes[0]   # Twelve Data は新しい順
+            month_low = min(closes)
+            month_high = max(closes)
+
+            return {
+                "current_price": current_price,
+                "month_low": month_low,
+                "month_high": month_high,
+            }
+
+        # 履歴が空なら latest price を試す
+        price_resp = requests.get(
+            f"{BASE_URL}/price",
+            params={
+                "symbol": symbol,
+                "apikey": settings.twelve_data_api_key,
+            },
+            timeout=20,
+        )
+        price_data = price_resp.json()
+        price_str = price_data.get("price")
+
+        if price_str is not None:
+            current_price = float(price_str)
+            return {
+                "current_price": current_price,
+                "month_low": current_price * 0.97,
+                "month_high": current_price * 1.08,
+            }
 
         return None
 
-    except Exception:
-        print(f"[fetch_single_price_data] failed for {code}")
-        print(traceback.format_exc())
+    except Exception as e:
+        print(f"[fetch_price_data] failed for {code}: {e}")
         return None
 
 
@@ -66,9 +104,8 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
     results: list[StockAnalysis] = []
 
     for stock in targets:
-        price_data = fetch_single_price_data(stock.code)
+        price_data = fetch_price_data(stock.code)
 
-        # 取得失敗でもスキップせず返す
         if price_data is None:
             results.append(
                 StockAnalysis(
@@ -86,7 +123,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        buy_line = round(month_low * 1.05, 2)
+        buy_line = round(month_low * 1.04, 2)
         danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
@@ -97,7 +134,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
                 code=stock.code,
                 price=round(price, 2),
                 fair_price=buy_line,
-                danger_price=danger_line,
+                danger_price=round(danger_line, 2),
                 status=status,
             )
         )
