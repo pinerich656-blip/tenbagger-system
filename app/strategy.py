@@ -10,8 +10,20 @@ from .models import StockAnalysis, StockInput
 DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ランディックス", code="2981.T"),
     StockInput(name="リアルゲイト", code="5532.T"),
-]
 
+    StockInput(name="ブロードエンタープライズ", code="4415.T"),
+    StockInput(name="パワーエックス", code="4890.T"),
+
+    # ←ここ追加
+    StockInput(name="ガーデン", code="274A.T"),
+
+    StockInput(name="マイクロアド", code="9553.T"),
+    StockInput(name="エッジテクノロジー", code="4268.T"),
+    StockInput(name="データX", code="3905.T"),
+    StockInput(name="ログリー", code="6579.T"),
+    StockInput(name="グッドパッチ", code="7351.T"),
+    StockInput(name="AI inside", code="4488.T"),
+]
 
 def fetch_price_data(code: str):
     try:
