@@ -7,6 +7,13 @@ import yfinance as yf
 
 from .models import StockAnalysis, StockInput
 
+
+def test_yfinance():
+    data = yf.download("2981.T", period="5d")
+    print(data)
+    return data
+
+
 DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ランディックス", code="2981.T"),
     StockInput(name="リアルゲイト", code="5532.T"),
@@ -88,10 +95,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        # 買いライン: 1か月安値から5%上まで
         buy_line = round(month_low * 1.05, 2)
-
-        # 危険ライン: 高値圏 or 現在値より十分上のどちらか高い方
         danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
