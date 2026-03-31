@@ -63,7 +63,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        # 買いライン: 1か月安値から5%上まで
+        # 買いライン: 1か月安値から8%上まで
         buy_line = round(month_low * 1.08, 2)
 
         # 危険ライン: 1か月高値の95%以上
