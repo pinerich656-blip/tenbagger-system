@@ -22,12 +22,18 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     return "様子見"
 
 
+import requests
+import yfinance as yf
+
+
 def fetch_price_data(code: str) -> dict | None:
     try:
-        ticker = yf.Ticker(code)
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0"
+        })
 
-        # 少し待つ（重要：制限回避）
-        time.sleep(1)
+        ticker = yf.Ticker(code, session=session)
 
         hist = ticker.history(period="1mo", interval="1d")
 
