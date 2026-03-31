@@ -7,13 +7,6 @@ import yfinance as yf
 
 from .models import StockAnalysis, StockInput
 
-
-def test_yfinance():
-    data = yf.download("2981.T", period="5d")
-    print(data)
-    return data
-
-
 DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ランディックス", code="2981.T"),
     StockInput(name="リアルゲイト", code="5532.T"),
@@ -28,6 +21,44 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     if price >= danger_line:
         return "危険"
     return "様子見"
+
+
+def fetch_single_price_data(code: str) -> dict | None:
+    try:
+        ticker = yf.Ticker(code)
+        hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
+
+        if hist is not None and not hist.empty and "Close" in hist.columns:
+            closes = hist["Close"].dropna()
+            if not closes.empty:
+                return {
+                    "current_price": float(closes.iloc[-1]),
+                    "month_low": float(closes.min()),
+                    "month_high": float(closes.max()),
+                }
+
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info:
+            last_price = fast_info.get("lastPrice") or fast_info.get("last_price")
+            day_low = fast_info.get("dayLow") or fast_info.get("day_low")
+            day_high = fast_info.get("dayHigh") or fast_info.get("day_high")
+
+            if last_price:
+                current_price = float(last_price)
+                month_low = float(day_low) if day_low else current_price * 0.97
+                month_high = float(day_high) if day_high else current_price * 1.08
+                return {
+                    "current_price": current_price,
+                    "month_low": month_low,
+                    "month_high": month_high,
+                }
+
+        return None
+
+    except Exception:
+        print(f"[fetch_single_price_data] failed for {code}")
+        print(traceback.format_exc())
+        return None
 
 
 def fetch_prices_batch(codes: list[str]) -> dict[str, dict]:
@@ -56,17 +87,13 @@ def fetch_prices_batch(codes: list[str]) -> dict[str, dict]:
                 if closes.empty:
                     continue
 
-                current_price = float(closes.iloc[-1])
-                month_low = float(closes.min())
-                month_high = float(closes.max())
-
                 results[code] = {
-                    "current_price": current_price,
-                    "month_low": month_low,
-                    "month_high": month_high,
+                    "current_price": float(closes.iloc[-1]),
+                    "month_low": float(closes.min()),
+                    "month_high": float(closes.max()),
                 }
             except Exception:
-                print(f"[fetch_prices_batch] failed parsing {code}")
+                print(f"[fetch_prices_batch] parse failed for {code}")
                 print(traceback.format_exc())
                 continue
 
@@ -87,6 +114,11 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
 
     for stock in targets:
         price_data = price_map.get(stock.code)
+
+        # 一括取得で取れなかった銘柄だけ個別取得
+        if price_data is None:
+            price_data = fetch_single_price_data(stock.code)
+
         if price_data is None:
             print(f"[analyze_stocks] skipped {stock.code} because price_data is None")
             continue
@@ -95,7 +127,9 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
+        # まずは1.05で固定
         buy_line = round(month_low * 1.05, 2)
+
         danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
