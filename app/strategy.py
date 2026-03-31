@@ -26,8 +26,8 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
 def fetch_single_price_data(code: str) -> dict | None:
     try:
         ticker = yf.Ticker(code)
-        hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
 
+        hist = ticker.history(period="1mo", interval="1d", auto_adjust=False)
         if hist is not None and not hist.empty and "Close" in hist.columns:
             closes = hist["Close"].dropna()
             if not closes.empty:
@@ -61,75 +61,32 @@ def fetch_single_price_data(code: str) -> dict | None:
         return None
 
 
-def fetch_prices_batch(codes: list[str]) -> dict[str, dict]:
-    try:
-        data = yf.download(
-            tickers=" ".join(codes),
-            period="1mo",
-            interval="1d",
-            auto_adjust=False,
-            group_by="ticker",
-            progress=False,
-            threads=False,
-        )
-
-        results: dict[str, dict] = {}
-
-        for code in codes:
-            try:
-                if len(codes) == 1:
-                    closes = data["Close"].dropna()
-                else:
-                    if code not in data.columns.get_level_values(0):
-                        continue
-                    closes = data[code]["Close"].dropna()
-
-                if closes.empty:
-                    continue
-
-                results[code] = {
-                    "current_price": float(closes.iloc[-1]),
-                    "month_low": float(closes.min()),
-                    "month_high": float(closes.max()),
-                }
-            except Exception:
-                print(f"[fetch_prices_batch] parse failed for {code}")
-                print(traceback.format_exc())
-                continue
-
-        return results
-
-    except Exception:
-        print("[fetch_prices_batch] batch download failed")
-        print(traceback.format_exc())
-        return {}
-
-
 def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnalysis]:
     targets = list(stocks) if stocks is not None else DEFAULT_STOCKS
-    codes = [s.code for s in targets]
-
-    price_map = fetch_prices_batch(codes)
     results: list[StockAnalysis] = []
 
     for stock in targets:
-        price_data = price_map.get(stock.code)
+        price_data = fetch_single_price_data(stock.code)
 
-        # 一括取得で取れなかった銘柄だけ個別取得
+        # 取得失敗でもスキップせず返す
         if price_data is None:
-            price_data = fetch_single_price_data(stock.code)
-
-        if price_data is None:
-            print(f"[analyze_stocks] skipped {stock.code} because price_data is None")
+            results.append(
+                StockAnalysis(
+                    name=stock.name,
+                    code=stock.code,
+                    price=0.0,
+                    fair_price=0.0,
+                    danger_price=0.0,
+                    status="取得失敗",
+                )
+            )
             continue
 
         price = price_data["current_price"]
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        # まずは1.05で固定
         buy_line = round(month_low * 1.05, 2)
-
         danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
