@@ -17,8 +17,7 @@ BASE_URL = "https://api.twelvedata.com"
 
 
 def td_symbol(code: str) -> str:
-    # 日本株はまず TSE 扱いで取りに行く
-    return f"{code}:TSE"
+    return code
 
 
 def classify_price(price: float, buy_line: float, danger_line: float) -> str:
@@ -31,12 +30,13 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
 
 def fetch_price_data(code: str) -> dict | None:
     if not settings.twelve_data_api_key:
+        print("[fetch_price_data] TWELVE_DATA_API_KEY missing")
         return None
 
     symbol = td_symbol(code)
+    print(f"[fetch_price_data] symbol={symbol}")
 
     try:
-        # まず日足の履歴を取る
         ts_resp = requests.get(
             f"{BASE_URL}/time_series",
             params={
@@ -48,6 +48,7 @@ def fetch_price_data(code: str) -> dict | None:
             timeout=20,
         )
         ts_data = ts_resp.json()
+        print(f"[fetch_price_data] time_series response for {symbol}: {ts_data}")
 
         values = ts_data.get("values", [])
         closes: list[float] = []
@@ -62,7 +63,7 @@ def fetch_price_data(code: str) -> dict | None:
                 continue
 
         if closes:
-            current_price = closes[0]   # Twelve Data は新しい順
+            current_price = closes[0]
             month_low = min(closes)
             month_high = max(closes)
 
@@ -72,7 +73,6 @@ def fetch_price_data(code: str) -> dict | None:
                 "month_high": month_high,
             }
 
-        # 履歴が空なら latest price を試す
         price_resp = requests.get(
             f"{BASE_URL}/price",
             params={
@@ -82,8 +82,9 @@ def fetch_price_data(code: str) -> dict | None:
             timeout=20,
         )
         price_data = price_resp.json()
-        price_str = price_data.get("price")
+        print(f"[fetch_price_data] price response for {symbol}: {price_data}")
 
+        price_str = price_data.get("price")
         if price_str is not None:
             current_price = float(price_str)
             return {
@@ -94,6 +95,9 @@ def fetch_price_data(code: str) -> dict | None:
 
         return None
 
+    except Exception as e:
+        print(f"[fetch_price_data] failed for {code}: {e}")
+        return None
     except Exception as e:
         print(f"[fetch_price_data] failed for {code}: {e}")
         return None
