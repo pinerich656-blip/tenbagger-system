@@ -38,7 +38,7 @@ def fetch_price_data(code: str) -> dict | None:
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        price_tag = soup.select_one("span._3rXWJKZF")
+        price_tag = soup.select_one("span[class*='_3rXWJKZF'], span[class*='Price']")
         if not price_tag:
             return None
 
