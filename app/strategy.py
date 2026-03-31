@@ -95,7 +95,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        buy_line = round(month_low * 1.03, 2)
+        buy_line = round(month_low * 1.04, 2)
         danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
