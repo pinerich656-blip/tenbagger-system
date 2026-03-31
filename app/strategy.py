@@ -16,8 +16,43 @@ DEFAULT_STOCKS: list[StockInput] = [
 BASE_URL = "https://api.twelvedata.com"
 
 
-def td_symbol(code: str) -> str:
-    return code
+def resolve_symbol(code: str) -> str | None:
+    if not settings.twelve_data_api_key:
+        return None
+
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/symbol_search",
+            params={
+                "symbol": code,
+                "apikey": settings.twelve_data_api_key,
+            },
+            timeout=20,
+        )
+        data = resp.json().get("data", [])
+
+        # 日本市場っぽい候補を優先
+        for item in data:
+            symbol = str(item.get("symbol", ""))
+            exchange = str(item.get("exchange", ""))
+            mic_code = str(item.get("mic_code", ""))
+
+            if code in symbol and (
+                "Tokyo" in exchange
+                or "Japan" in exchange
+                or mic_code == "XJPX"
+            ):
+                return symbol
+
+        # 取れなければ最初の候補
+        if data:
+            return str(data[0].get("symbol"))
+
+        return None
+
+    except Exception as e:
+        print(f"[resolve_symbol] failed for {code}: {e}")
+        return None
 
 
 def classify_price(price: float, buy_line: float, danger_line: float) -> str:
@@ -33,8 +68,11 @@ def fetch_price_data(code: str) -> dict | None:
         print("[fetch_price_data] TWELVE_DATA_API_KEY missing")
         return None
 
-    symbol = td_symbol(code)
-    print(f"[fetch_price_data] symbol={symbol}")
+    symbol = resolve_symbol(code)
+    print(f"[fetch_price_data] code={code}, resolved_symbol={symbol}")
+
+    if not symbol:
+        return None
 
     try:
         ts_resp = requests.get(
@@ -98,7 +136,6 @@ def fetch_price_data(code: str) -> dict | None:
     except Exception as e:
         print(f"[fetch_price_data] failed for {code}: {e}")
         return None
-    
 
 
 def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnalysis]:
