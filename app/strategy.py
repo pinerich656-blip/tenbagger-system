@@ -12,7 +12,7 @@ DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="リアルゲイト", code="5532.T"),
 
     StockInput(name="ブロードエンタープライズ", code="4415.T"),
-    StockInput(name="パワーエックス", code="4890.T"),
+    StockInput(name="パワーエックス", code="485A.T"),
 
     # ←ここ追加
     StockInput(name="ガーデン", code="274A.T"),
