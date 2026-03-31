@@ -10,13 +10,9 @@ from .models import StockAnalysis, StockInput
 DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ランディックス", code="2981.T"),
     StockInput(name="リアルゲイト", code="5532.T"),
-
     StockInput(name="ブロードエンタープライズ", code="4415.T"),
     StockInput(name="パワーエックス", code="485A.T"),
-
-    # ←ここ追加
     StockInput(name="ガーデン", code="274A.T"),
-
     StockInput(name="マイクロアド", code="9553.T"),
     StockInput(name="エッジテクノロジー", code="4268.T"),
     StockInput(name="データX", code="3905.T"),
@@ -24,6 +20,7 @@ DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="グッドパッチ", code="7351.T"),
     StockInput(name="AI inside", code="4488.T"),
 ]
+
 
 def fetch_price_data(code: str):
     try:
@@ -91,11 +88,11 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_low = price_data["month_low"]
         month_high = price_data["month_high"]
 
-        # 買いライン: 1か月安値から8%上まで
-        buy_line = round(month_low * 1.08, 2)
+        # 買いライン: 1か月安値から5%上まで
+        buy_line = round(month_low * 1.05, 2)
 
-        # 危険ライン: 1か月高値の95%以上
-        danger_line = round(month_high * 0.95, 2)
+        # 危険ライン: 高値圏 or 現在値より十分上のどちらか高い方
+        danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
         status = classify_price(price, buy_line, danger_line)
 
