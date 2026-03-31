@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Iterable
 import time
-import yfinance as yf
 
 from .models import StockAnalysis, StockInput
 
