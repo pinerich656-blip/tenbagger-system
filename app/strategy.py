@@ -24,6 +24,7 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
 import requests
 from bs4 import BeautifulSoup
 import time
+import json
 
 
 session = requests.Session()
@@ -40,25 +41,27 @@ def fetch_price_data(code: str) -> dict | None:
         url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
         res = session.get(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
+        html = res.text
 
-        # ① メイン
-        price_tag = soup.select_one("span[class*='_3rXWJKZF']")
+        soup = BeautifulSoup(html, "html.parser")
 
-        # ② フォールバック
-        if not price_tag:
-            price_tag = soup.select_one("span[class*='Price']")
+        # ★ JSONスクリプトを探す
+        scripts = soup.find_all("script")
 
-        if not price_tag:
-            return None
+        for script in scripts:
+            if "root.App.main" in script.text:
+                json_text = script.text.split("root.App.main = ")[1].rstrip(";")
+                data = json.loads(json_text)
 
-        price = float(price_tag.text.replace(",", "").replace("円", ""))
+                price = data["context"]["dispatcher"]["stores"]["QuoteSummaryStore"]["price"]["regularMarketPrice"]["raw"]
 
-        return {
-            "current_price": price,
-            "month_low": price * 0.95,
-            "month_high": price * 1.05,
-        }
+                return {
+                    "current_price": float(price),
+                    "month_low": float(price) * 0.95,
+                    "month_high": float(price) * 1.05,
+                }
+
+        return None
 
     except Exception as e:
         print(f"[fetch_price_data] failed: {e}")
