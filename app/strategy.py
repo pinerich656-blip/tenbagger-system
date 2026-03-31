@@ -28,7 +28,8 @@ from bs4 import BeautifulSoup
 
 def fetch_price_data(code: str) -> dict | None:
     try:
-        url = f"https://finance.yahoo.co.jp/quote/{code}"
+        code_clean = code.replace(".T", "")
+        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
         headers = {
             "User-Agent": "Mozilla/5.0"
