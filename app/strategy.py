@@ -98,9 +98,7 @@ def fetch_price_data(code: str) -> dict | None:
     except Exception as e:
         print(f"[fetch_price_data] failed for {code}: {e}")
         return None
-    except Exception as e:
-        print(f"[fetch_price_data] failed for {code}: {e}")
-        return None
+    
 
 
 def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnalysis]:
