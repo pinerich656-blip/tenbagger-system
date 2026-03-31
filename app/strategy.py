@@ -26,6 +26,12 @@ from bs4 import BeautifulSoup
 import time
 
 
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0"
+})
+
+
 def fetch_price_data(code: str) -> dict | None:
     try:
         time.sleep(1)
@@ -33,11 +39,7 @@ def fetch_price_data(code: str) -> dict | None:
         code_clean = code.replace(".T", "")
         url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-
-        res = requests.get(url, headers=headers, timeout=10)
+        res = session.get(url, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
 
         # ① メイン
