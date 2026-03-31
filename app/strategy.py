@@ -16,9 +16,17 @@ DEFAULT_STOCKS: list[StockInput] = [
 BASE_URL = "https://api.twelvedata.com"
 
 
-def resolve_symbol(code: str) -> str | None:
+def classify_price(price: float, buy_line: float, danger_line: float) -> str:
+    if price <= buy_line:
+        return "買い候補"
+    if price >= danger_line:
+        return "危険"
+    return "様子見"
+
+
+def resolve_symbol(code: str) -> tuple[str | None, str]:
     if not settings.twelve_data_api_key:
-        return None
+        return None, "APIキー未設定"
 
     try:
         resp = requests.get(
@@ -29,10 +37,13 @@ def resolve_symbol(code: str) -> str | None:
             },
             timeout=20,
         )
-        data = resp.json().get("data", [])
+        data = resp.json()
 
-        # 日本市場っぽい候補を優先
-        for item in data:
+        items = data.get("data")
+        if not items:
+            return None, f"symbol_search失敗: {data}"
+
+        for item in items:
             symbol = str(item.get("symbol", ""))
             exchange = str(item.get("exchange", ""))
             mic_code = str(item.get("mic_code", ""))
@@ -42,37 +53,18 @@ def resolve_symbol(code: str) -> str | None:
                 or "Japan" in exchange
                 or mic_code == "XJPX"
             ):
-                return symbol
+                return symbol, "OK"
 
-        # 取れなければ最初の候補
-        if data:
-            return str(data[0].get("symbol"))
-
-        return None
+        return str(items[0].get("symbol")), "候補先頭を採用"
 
     except Exception as e:
-        print(f"[resolve_symbol] failed for {code}: {e}")
-        return None
+        return None, f"symbol_search例外: {e}"
 
 
-def classify_price(price: float, buy_line: float, danger_line: float) -> str:
-    if price <= buy_line:
-        return "買い候補"
-    if price >= danger_line:
-        return "危険"
-    return "様子見"
-
-
-def fetch_price_data(code: str) -> dict | None:
-    if not settings.twelve_data_api_key:
-        print("[fetch_price_data] TWELVE_DATA_API_KEY missing")
-        return None
-
-    symbol = resolve_symbol(code)
-    print(f"[fetch_price_data] code={code}, resolved_symbol={symbol}")
-
+def fetch_price_data(code: str) -> tuple[dict | None, str]:
+    symbol, reason = resolve_symbol(code)
     if not symbol:
-        return None
+        return None, reason
 
     try:
         ts_resp = requests.get(
@@ -86,7 +78,6 @@ def fetch_price_data(code: str) -> dict | None:
             timeout=20,
         )
         ts_data = ts_resp.json()
-        print(f"[fetch_price_data] time_series response for {symbol}: {ts_data}")
 
         values = ts_data.get("values", [])
         closes: list[float] = []
@@ -109,7 +100,7 @@ def fetch_price_data(code: str) -> dict | None:
                 "current_price": current_price,
                 "month_low": month_low,
                 "month_high": month_high,
-            }
+            }, f"OK symbol={symbol}"
 
         price_resp = requests.get(
             f"{BASE_URL}/price",
@@ -120,7 +111,6 @@ def fetch_price_data(code: str) -> dict | None:
             timeout=20,
         )
         price_data = price_resp.json()
-        print(f"[fetch_price_data] price response for {symbol}: {price_data}")
 
         price_str = price_data.get("price")
         if price_str is not None:
@@ -129,13 +119,12 @@ def fetch_price_data(code: str) -> dict | None:
                 "current_price": current_price,
                 "month_low": current_price * 0.97,
                 "month_high": current_price * 1.08,
-            }
+            }, f"price fallback OK symbol={symbol}"
 
-        return None
+        return None, f"time_series/price失敗 symbol={symbol} ts={ts_data} price={price_data}"
 
     except Exception as e:
-        print(f"[fetch_price_data] failed for {code}: {e}")
-        return None
+        return None, f"price取得例外 symbol={symbol}: {e}"
 
 
 def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnalysis]:
@@ -143,7 +132,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
     results: list[StockAnalysis] = []
 
     for stock in targets:
-        price_data = fetch_price_data(stock.code)
+        price_data, reason = fetch_price_data(stock.code)
 
         if price_data is None:
             results.append(
@@ -153,7 +142,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
                     price=0.0,
                     fair_price=0.0,
                     danger_price=0.0,
-                    status="取得失敗",
+                    status=reason[:120],
                 )
             )
             continue
