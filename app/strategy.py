@@ -45,16 +45,16 @@ def fetch_price_data(code: str) -> dict | None:
         res = session.get(url, timeout=10)
         res.raise_for_status()
 
-        text = BeautifulSoup(res.text, "html.parser").get_text("\n", strip=True)
+        soup = BeautifulSoup(res.text, "html.parser")
 
         import re
 
-        # 銘柄コードの近くにある最初の価格っぽい数字を拾う
-        m = re.search(
-            rf"{re.escape(code_clean)}.*?([0-9,]+)\s*円?",
-            text,
-            re.DOTALL,
-        )
+        # ★ページ全体のテキスト
+        text = soup.get_text("\n", strip=True)
+
+        # ★「前日比」の直前にある価格を狙う（これが一番安定）
+        m = re.search(r"([0-9,]+)\n前日比", text)
+
         if not m:
             return None
 
