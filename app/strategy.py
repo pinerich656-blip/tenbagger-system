@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Iterable
 import time
+import requests
+from bs4 import BeautifulSoup
 
 from .models import StockAnalysis, StockInput
 
