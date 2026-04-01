@@ -49,8 +49,9 @@ def fetch_price_data(code: str) -> dict | None:
 
         import re
 
+        # 銘柄コードの近くにある最初の価格っぽい数字を拾う
         m = re.search(
-            rf"{re.escape(code_clean)}.*?\n([0-9,]+)\n前日比",
+            rf"{re.escape(code_clean)}.*?([0-9,]+)\s*円?",
             text,
             re.DOTALL,
         )
