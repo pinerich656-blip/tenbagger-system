@@ -36,20 +36,27 @@ def fetch_price_data(code: str) -> dict | None:
         url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
         res = session.get(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
+        res.raise_for_status()
 
-        meta = soup.find("meta", property="og:title")
-        if not meta:
-            return None
-
-        content = meta.get("content", "")
+        text = BeautifulSoup(res.text, "html.parser").get_text("\n", strip=True)
 
         import re
-        match = re.search(r"([0-9,]+)円", content)
-        if not match:
+
+        # 例:
+        # 東証GRT
+        # (株)ランディックス
+        # 2981【不動産業】
+        # 2,214
+        # 前日比
+        m = re.search(
+            rf"{re.escape(code_clean)}.*?\n([0-9,]+)\n前日比",
+            text,
+            re.DOTALL,
+        )
+        if not m:
             return None
 
-        price = float(match.group(1).replace(",", ""))
+        price = float(m.group(1).replace(",", ""))
 
         return {
             "current_price": price,
