@@ -14,6 +14,11 @@ DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ガーデン", code="274A.T"),
 ]
 
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0"
+})
+
 
 def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     if price <= buy_line:
@@ -21,18 +26,6 @@ def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     if price >= danger_line:
         return "危険"
     return "様子見"
-
-
-import requests
-from bs4 import BeautifulSoup
-import time
-import json
-
-
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0"
-})
 
 
 def fetch_price_data(code: str) -> dict | None:
@@ -45,14 +38,12 @@ def fetch_price_data(code: str) -> dict | None:
         res = session.get(url, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # ★ og:title から価格取得
         meta = soup.find("meta", property="og:title")
         if not meta:
             return None
 
         content = meta.get("content", "")
 
-        # 例: "ランディックス【2981】株価 2,120円"
         import re
         match = re.search(r"([0-9,]+)円", content)
         if not match:
