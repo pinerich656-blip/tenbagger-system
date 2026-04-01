@@ -41,27 +41,28 @@ def fetch_price_data(code: str) -> dict | None:
         url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
         res = session.get(url, timeout=10)
-        html = res.text
+        soup = BeautifulSoup(res.text, "html.parser")
 
-        soup = BeautifulSoup(html, "html.parser")
+        # ★ og:title から価格取得
+        meta = soup.find("meta", property="og:title")
+        if not meta:
+            return None
 
-        # ★ JSONスクリプトを探す
-        scripts = soup.find_all("script")
+        content = meta.get("content", "")
 
-        for script in scripts:
-            if "root.App.main" in script.text:
-                json_text = script.text.split("root.App.main = ")[1].rstrip(";")
-                data = json.loads(json_text)
+        # 例: "ランディックス【2981】株価 2,120円"
+        import re
+        match = re.search(r"([0-9,]+)円", content)
+        if not match:
+            return None
 
-                price = data["context"]["dispatcher"]["stores"]["QuoteSummaryStore"]["price"]["regularMarketPrice"]["raw"]
+        price = float(match.group(1).replace(",", ""))
 
-                return {
-                    "current_price": float(price),
-                    "month_low": float(price) * 0.95,
-                    "month_high": float(price) * 1.05,
-                }
-
-        return None
+        return {
+            "current_price": price,
+            "month_low": price * 0.95,
+            "month_high": price * 1.05,
+        }
 
     except Exception as e:
         print(f"[fetch_price_data] failed: {e}")
