@@ -16,6 +16,9 @@ DEFAULT_STOCKS: list[StockInput] = [
     StockInput(name="ログリー", code="6579.T"),
     StockInput(name="グッドパッチ", code="7351.T"),
     StockInput(name="AI inside", code="4488.T"),
+
+    # ★追加
+    StockInput(name="パワーエックス", code="4890.T"),
 ]
 
 session = requests.Session()
