@@ -423,5 +423,5 @@ def analyze_and_collect_notifications(
         }
 
     notifications = build_notifications(results, previous_state, change_map)
-    _save_current_state(results, change_map)
-    return results, notifications
+_save_current_state(results, change_map, previous_state)
+return results, notifications
