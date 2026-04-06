@@ -199,41 +199,29 @@ def _load_previous_state() -> dict[str, dict]:
         logger.warning("[state] load failed: %s", e)
         return {}
 
-
-def fetch_current_price(code: str) -> float | None:
-    """
-    Yahooファイナンス日本の個別ページから現在値を取得する。
-    """
+def _save_current_state(results: list[StockAnalysis], change_map: dict[str, dict]) -> None:
     try:
-        time.sleep(REQUEST_SLEEP_SEC)
+        payload: dict[str, dict] = {}
 
-        code_clean = code.replace(".T", "")
-        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
+        for r in results:
+            extra = change_map.get(r.code, {})
+            payload[r.code] = {
+                "name": r.name,
+                "price": r.price,
+                "fair_price": r.fair_price,
+                "danger_price": r.danger_price,
+                "status": r.status,
+                "prev_price": extra.get("prev_price"),
+                "change_pct": extra.get("change_pct"),
+            }
 
-        res = _request_with_retry(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        text = soup.get_text("\n", strip=True)
-
-        idx = text.find(code_clean)
-        if idx == -1:
-            logger.warning("[fetch_current_price] code not found in page text: %s", code)
-            return None
-
-        window = text[idx:idx + 1500]
-
-        m = re.search(r"([0-9,]+)\n前日比", window)
-        if not m:
-            m = re.search(r"([0-9,]+)\s*円", window)
-
-        if not m:
-            logger.warning("[fetch_current_price] price regex miss for %s", code)
-            return None
-
-        return round(float(m.group(1).replace(",", "")), 2)
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        logger.warning("[fetch_current_price] failed for %s: %s", code, e)
-        return None
+        logger.warning("[state] save failed: %s", e)
+
+        
 
 
 def _calc_price_change_pct(current_price: float, prev_price: float | None) -> float | None:
