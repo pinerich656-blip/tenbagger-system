@@ -200,6 +200,7 @@ def _load_previous_state() -> dict[str, dict]:
         logger.warning("[state] load failed: %s", e)
         return {}
 
+
 def _save_current_state(
     results: list[StockAnalysis],
     change_map: dict[str, dict],
