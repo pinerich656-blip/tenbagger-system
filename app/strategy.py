@@ -383,6 +383,6 @@ def analyze_and_collect_notifications(
             "change_pct": change_pct,
         }
 
-        notifications = build_notifications(results, previous_state, change_map)
+            notifications = build_notifications(results, previous_state, change_map)
     _save_current_state(results, change_map, previous_state)
     return results, notifications
