@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from typing import Iterable
-import csv
-import io
 import json
 import logging
 import os
+import re
 import time
-from datetime import datetime
 
 import requests
+from bs4 import BeautifulSoup
 
 from .models import StockAnalysis, StockInput
 
@@ -40,44 +39,21 @@ session.headers.update(
 )
 
 STATE_FILE = os.getenv("STOCK_STATE_FILE", "stock_state.json")
-REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.0"))
+REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.5"))
 MAX_RETRY = int(os.getenv("FETCH_MAX_RETRY", "2"))
-LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "22"))  # 営業日ベースで約1か月
+
+# 価格変動ベースの判定閾値
+BUY_DROP_PCT = float(os.getenv("BUY_DROP_PCT", "0.03"))          # 前回比 -3% で買い候補
+STRONG_BUY_DROP_PCT = float(os.getenv("STRONG_BUY_DROP_PCT", "0.05"))  # 前回比 -5% で強い買い候補メモ用
+DANGER_RISE_PCT = float(os.getenv("DANGER_RISE_PCT", "0.08"))    # 前回比 +8% で高値警戒
 
 
-def classify_price(price: float, buy_line: float, overheat_line: float) -> str:
-    if price <= buy_line:
-        return "買い候補"
-    if price >= overheat_line:
-        return "高値警戒"
-    return "様子見"
-
-
-def _to_stooq_symbol(code: str) -> str:
-    # 2981.T -> 2981.jp
-    return code.replace(".T", "").lower() + ".jp"
-
-
-def _safe_float(value: str | None) -> float | None:
-    try:
-        if value is None or value == "":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _request_with_retry(
-    url: str,
-    *,
-    timeout: int = 15,
-    params: dict | None = None,
-) -> requests.Response:
+def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
     last_error: Exception | None = None
 
     for attempt in range(1, MAX_RETRY + 2):
         try:
-            res = session.get(url, params=params, timeout=timeout)
+            res = session.get(url, timeout=timeout)
 
             if res.status_code == 429:
                 wait_sec = 5 * attempt
@@ -110,10 +86,9 @@ def _request_with_retry(
         except Exception as e:
             last_error = e
             logger.warning(
-                "[request] failed attempt=%s url=%s params=%s error=%s",
+                "[request] failed attempt=%s url=%s error=%s",
                 attempt,
                 url,
-                params,
                 e,
             )
             time.sleep(2 * attempt)
@@ -121,87 +96,39 @@ def _request_with_retry(
     raise last_error if last_error else RuntimeError("request failed")
 
 
-def fetch_price_data(code: str) -> dict | None:
+def fetch_current_price(code: str) -> float | None:
     """
-    Stooq のCSV日足から現在値・1か月安値・1か月高値を取得する。
+    Yahooファイナンス日本の個別ページから現在値を取得する。
     """
     try:
         time.sleep(REQUEST_SLEEP_SEC)
 
-        symbol = _to_stooq_symbol(code)
-        url = "https://stooq.com/q/d/l/"
-        params = {
-            "s": symbol,
-            "i": "d",  # daily
-        }
+        code_clean = code.replace(".T", "")
+        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
 
-        res = _request_with_retry(url, timeout=15, params=params)
-        text = res.text.strip()
+        res = _request_with_retry(url, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        text = soup.get_text("\n", strip=True)
 
-        if not text or "No data" in text:
-            logger.warning("[fetch_price_data] no csv data for %s (%s)", code, symbol)
+        idx = text.find(code_clean)
+        if idx == -1:
+            logger.warning("[fetch_current_price] code not found in page text: %s", code)
             return None
 
-        reader = csv.DictReader(io.StringIO(text))
-        rows = list(reader)
+        window = text[idx:idx + 1500]
 
-        if not rows:
-            logger.warning("[fetch_price_data] empty csv rows for %s (%s)", code, symbol)
+        m = re.search(r"([0-9,]+)\n前日比", window)
+        if not m:
+            m = re.search(r"([0-9,]+)\s*円", window)
+
+        if not m:
+            logger.warning("[fetch_current_price] price regex miss for %s", code)
             return None
 
-        parsed_rows: list[dict] = []
-        for row in rows:
-            date_str = row.get("Date")
-            close_v = _safe_float(row.get("Close"))
-            high_v = _safe_float(row.get("High"))
-            low_v = _safe_float(row.get("Low"))
-
-            if not date_str or close_v is None or high_v is None or low_v is None:
-                continue
-
-            try:
-                dt = datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
-                continue
-
-            parsed_rows.append(
-                {
-                    "date": dt,
-                    "close": close_v,
-                    "high": high_v,
-                    "low": low_v,
-                }
-            )
-
-        if not parsed_rows:
-            logger.warning("[fetch_price_data] no valid rows for %s (%s)", code, symbol)
-            return None
-
-        parsed_rows.sort(key=lambda x: x["date"])
-        recent = parsed_rows[-LOOKBACK_DAYS:]
-
-        if len(recent) < 5:
-            logger.warning(
-                "[fetch_price_data] insufficient recent rows for %s (%s): %s",
-                code,
-                symbol,
-                len(recent),
-            )
-            return None
-
-        current_price = recent[-1]["close"]
-        month_low = min(r["low"] for r in recent)
-        month_high = max(r["high"] for r in recent)
-
-        return {
-            "current_price": round(current_price, 2),
-            "month_low": round(month_low, 2),
-            "month_high": round(month_high, 2),
-            "source": "stooq_csv",
-        }
+        return round(float(m.group(1).replace(",", "")), 2)
 
     except Exception as e:
-        logger.warning("[fetch_price_data] failed for %s: %s", code, e)
+        logger.warning("[fetch_current_price] failed for %s: %s", code, e)
         return None
 
 
@@ -218,16 +145,20 @@ def _load_previous_state() -> dict[str, dict]:
         return {}
 
 
-def _save_current_state(results: list[StockAnalysis]) -> None:
+def _save_current_state(results: list[StockAnalysis], change_map: dict[str, dict]) -> None:
     try:
         payload: dict[str, dict] = {}
+
         for r in results:
+            extra = change_map.get(r.code, {})
             payload[r.code] = {
                 "name": r.name,
                 "price": r.price,
                 "fair_price": r.fair_price,
                 "danger_price": r.danger_price,
                 "status": r.status,
+                "prev_price": extra.get("prev_price"),
+                "change_pct": extra.get("change_pct"),
             }
 
         with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -237,45 +168,103 @@ def _save_current_state(results: list[StockAnalysis]) -> None:
         logger.warning("[state] save failed: %s", e)
 
 
+def _calc_price_change_pct(current_price: float, prev_price: float | None) -> float | None:
+    if prev_price is None or prev_price <= 0:
+        return None
+    return (current_price - prev_price) / prev_price
+
+
+def _build_lines_from_prev_price(current_price: float, prev_price: float | None) -> tuple[float, float]:
+    """
+    StockAnalysisの fair_price / danger_price を維持するための値。
+    fair_price: 買い候補ライン（前回価格ベース）
+    danger_price: 高値警戒ライン（前回価格ベース）
+    """
+    base = prev_price if prev_price and prev_price > 0 else current_price
+    buy_line = round(base * (1 - BUY_DROP_PCT), 2)
+    danger_line = round(base * (1 + DANGER_RISE_PCT), 2)
+    return buy_line, danger_line
+
+
+def classify_price_change(current_price: float, prev_price: float | None) -> str:
+    """
+    前回価格比で判定する。
+    初回は様子見。
+    """
+    change_pct = _calc_price_change_pct(current_price, prev_price)
+
+    if change_pct is None:
+        return "様子見"
+
+    if change_pct <= -BUY_DROP_PCT:
+        return "買い候補"
+
+    if change_pct >= DANGER_RISE_PCT:
+        return "高値警戒"
+
+    return "様子見"
+
+
+def _format_pct(change_pct: float | None) -> str:
+    if change_pct is None:
+        return "N/A"
+    return f"{change_pct * 100:+.2f}%"
+
+
 def build_notifications(
     results: list[StockAnalysis],
     previous_state: dict[str, dict] | None = None,
+    change_map: dict[str, dict] | None = None,
 ) -> list[str]:
     prev = previous_state or {}
+    meta = change_map or {}
     messages: list[str] = []
 
     for r in results:
         old = prev.get(r.code, {})
         old_status = old.get("status")
         old_price = old.get("price")
+        change_pct = meta.get(r.code, {}).get("change_pct")
 
-        if old_status is None:
+        # 初回は通知しない
+        if old_price is None:
             continue
 
         if r.status != old_status:
-            messages.append(
+            msg = (
                 f"{r.name}（{r.code}）: {old_status} → {r.status} "
-                f"/ 株価 {old_price} → {r.price} / 買いライン {r.fair_price}"
+                f"/ 株価 {old_price} → {r.price} "
+                f"/ 変動率 {_format_pct(change_pct)} "
+                f"/ 買いライン {r.fair_price}"
             )
+            if change_pct is not None and change_pct <= -STRONG_BUY_DROP_PCT:
+                msg += " / 急落"
+            messages.append(msg)
             continue
 
         if r.status == "買い候補" and old_price != r.price:
-            messages.append(
-                f"{r.name}（{r.code}）: 買い候補継続 / 株価 {old_price} → {r.price} "
+            msg = (
+                f"{r.name}（{r.code}）: 買い候補継続 "
+                f"/ 株価 {old_price} → {r.price} "
+                f"/ 変動率 {_format_pct(change_pct)} "
                 f"/ 買いライン {r.fair_price}"
             )
+            if change_pct is not None and change_pct <= -STRONG_BUY_DROP_PCT:
+                msg += " / 急落"
+            messages.append(msg)
 
     return messages
 
 
 def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnalysis]:
+    previous_state = _load_previous_state()
     targets = list(stocks) if stocks is not None else DEFAULT_STOCKS
     results: list[StockAnalysis] = []
 
     for stock in targets:
-        price_data = fetch_price_data(stock.code)
+        current_price = fetch_current_price(stock.code)
 
-        if price_data is None:
+        if current_price is None:
             results.append(
                 StockAnalysis(
                     name=stock.name,
@@ -288,25 +277,19 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
             )
             continue
 
-        price = float(price_data["current_price"])
-        month_low = float(price_data["month_low"])
-        month_high = float(price_data["month_high"])
+        prev_price_raw = previous_state.get(stock.code, {}).get("price")
+        prev_price = float(prev_price_raw) if prev_price_raw not in (None, 0, 0.0) else None
 
-        buy_line = round(month_low * 1.04, 2)
-        overheat_line = round(month_high * 0.97, 2)
-
-        if overheat_line <= buy_line:
-            overheat_line = round(buy_line * 1.03, 2)
-
-        status = classify_price(price, buy_line, overheat_line)
+        buy_line, danger_line = _build_lines_from_prev_price(current_price, prev_price)
+        status = classify_price_change(current_price, prev_price)
 
         results.append(
             StockAnalysis(
                 name=stock.name,
                 code=stock.code,
-                price=round(price, 2),
+                price=round(current_price, 2),
                 fair_price=buy_line,
-                danger_price=overheat_line,
+                danger_price=danger_line,
                 status=status,
             )
         )
@@ -318,7 +301,50 @@ def analyze_and_collect_notifications(
     stocks: Iterable[StockInput] | None = None,
 ) -> tuple[list[StockAnalysis], list[str]]:
     previous_state = _load_previous_state()
-    results = analyze_stocks(stocks)
-    notifications = build_notifications(results, previous_state)
-    _save_current_state(results)
+    targets = list(stocks) if stocks is not None else DEFAULT_STOCKS
+
+    results: list[StockAnalysis] = []
+    change_map: dict[str, dict] = {}
+
+    for stock in targets:
+        current_price = fetch_current_price(stock.code)
+
+        if current_price is None:
+            results.append(
+                StockAnalysis(
+                    name=stock.name,
+                    code=stock.code,
+                    price=0.0,
+                    fair_price=0.0,
+                    danger_price=0.0,
+                    status="取得失敗",
+                )
+            )
+            continue
+
+        prev_price_raw = previous_state.get(stock.code, {}).get("price")
+        prev_price = float(prev_price_raw) if prev_price_raw not in (None, 0, 0.0) else None
+
+        change_pct = _calc_price_change_pct(current_price, prev_price)
+        buy_line, danger_line = _build_lines_from_prev_price(current_price, prev_price)
+        status = classify_price_change(current_price, prev_price)
+
+        results.append(
+            StockAnalysis(
+                name=stock.name,
+                code=stock.code,
+                price=round(current_price, 2),
+                fair_price=buy_line,
+                danger_price=danger_line,
+                status=status,
+            )
+        )
+
+        change_map[stock.code] = {
+            "prev_price": prev_price,
+            "change_pct": change_pct,
+        }
+
+    notifications = build_notifications(results, previous_state, change_map)
+    _save_current_state(results, change_map)
     return results, notifications
