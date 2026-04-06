@@ -195,6 +195,7 @@ def _load_previous_state() -> dict[str, dict]:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
+
     except Exception as e:
         logger.warning("[state] load failed: %s", e)
         return {}
