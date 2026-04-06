@@ -120,6 +120,32 @@ def _extract_price_from_text(text: str, code: str) -> float | None:
 
     return None
 
+def _fetch_from_yahoo_jp(code: str) -> float | None:
+    code_clean = code.replace(".T", "")
+    url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
+
+    res = _request_with_retry(url, timeout=10)
+    soup = BeautifulSoup(res.text, "html.parser")
+    text = soup.get_text("\n", strip=True)
+
+    price = _extract_price_from_text(text, code)
+    if price is None:
+        logger.warning("[_fetch_from_yahoo_jp] price regex miss for %s", code)
+    return price
+
+
+def fetch_current_price(code: str) -> float | None:
+    """
+    Yahooファイナンス日本の個別ページから現在値を取得する。
+    取れなければ None を返す。
+    """
+    try:
+        time.sleep(REQUEST_SLEEP_SEC)
+        return _fetch_from_yahoo_jp(code)
+    except Exception as e:
+        logger.warning("[fetch_current_price] yahoo_jp failed for %s: %s", code, e)
+        return None
+
 
 def _load_previous_state() -> dict[str, dict]:
     if not os.path.exists(STATE_FILE):
@@ -357,6 +383,6 @@ def analyze_and_collect_notifications(
             "change_pct": change_pct,
         }
 
-    notifications = build_notifications(results, previous_state, change_map)
-_save_current_state(results, change_map, previous_state)
-return results, notifications
+        notifications = build_notifications(results, previous_state, change_map)
+    _save_current_state(results, change_map, previous_state)
+    return results, notifications
