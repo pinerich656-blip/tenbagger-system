@@ -388,7 +388,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
             )
         )
 
-        results = _sanitize_results(results)
+    results = _sanitize_results(results)
     return results
 
 
