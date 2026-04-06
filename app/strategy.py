@@ -99,24 +99,37 @@ def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
 def _extract_price_from_text(text: str, code: str) -> float | None:
     code_clean = code.replace(".T", "")
 
-    idx = text.find(code_clean)
-    if idx == -1:
+    # コードの出現位置を全部探す
+    positions: list[int] = []
+    start = 0
+    while True:
+        idx = text.find(code_clean, start)
+        if idx == -1:
+            break
+        positions.append(idx)
+        start = idx + len(code_clean)
+
+    if not positions:
         return None
 
-    window = text[idx:idx + 1200]
+    # 各出現位置の近くを狭く見る
+    for idx in positions:
+        window = text[idx:idx + 400]
 
-    patterns = [
-        rf"{re.escape(code_clean)}.*?\n([0-9,]+)\n前日比",
-        rf"{re.escape(code_clean)}.*?([0-9,]+)\s*円",
-    ]
+        patterns = [
+            rf"{re.escape(code_clean)}.*?\n([0-9,]+)\n前日比",
+            rf"{re.escape(code_clean)}.*?([0-9,]+)\s*円",
+        ]
 
-    for pattern in patterns:
-        m = re.search(pattern, window, re.DOTALL)
-        if m:
-            try:
-                return round(float(m.group(1).replace(",", "")), 2)
-            except ValueError:
-                continue
+        for pattern in patterns:
+            m = re.search(pattern, window, re.DOTALL)
+            if m:
+                try:
+                    price = float(m.group(1).replace(",", ""))
+                    if 50 <= price <= 200000:
+                        return round(price, 2)
+                except ValueError:
+                    continue
 
     return None
 
@@ -195,7 +208,50 @@ def _save_current_state(
 
     except Exception as e:
         logger.warning("[state] save failed: %s", e)
-        
+
+
+def _sanitize_results(results: list[StockAnalysis]) -> list[StockAnalysis]:
+    """
+    同じ価格が大量発生したら、その回の取得を異常とみなして無効化する。
+    """
+    price_map: dict[float, list[int]] = {}
+
+    for i, r in enumerate(results):
+        if r.status == "取得失敗" or r.price <= 0:
+            continue
+        price_map.setdefault(r.price, []).append(i)
+
+    # 同じ価格が3件以上あれば異常とみなす
+    suspicious_indexes: set[int] = set()
+    for price, indexes in price_map.items():
+        if len(indexes) >= 3:
+            suspicious_indexes.update(indexes)
+            logger.warning(
+                "[sanitize] suspicious duplicated price detected: price=%s count=%s",
+                price,
+                len(indexes),
+            )
+
+    if not suspicious_indexes:
+        return results
+
+    fixed_results: list[StockAnalysis] = []
+    for i, r in enumerate(results):
+        if i in suspicious_indexes:
+            fixed_results.append(
+                StockAnalysis(
+                    name=r.name,
+                    code=r.code,
+                    price=0.0,
+                    fair_price=0.0,
+                    danger_price=0.0,
+                    status="取得失敗",
+                )
+            )
+        else:
+            fixed_results.append(r)
+
+    return fixed_results
 
 
 def _calc_price_change_pct(current_price: float, prev_price: float | None) -> float | None:
@@ -332,6 +388,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
             )
         )
 
+        results = _sanitize_results(results)
     return results
 
 
@@ -383,6 +440,7 @@ def analyze_and_collect_notifications(
             "change_pct": change_pct,
         }
 
+        results = _sanitize_results(results)
     notifications = build_notifications(results, previous_state, change_map)
     _save_current_state(results, change_map, previous_state)
     return results, notifications
