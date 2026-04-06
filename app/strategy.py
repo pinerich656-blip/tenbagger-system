@@ -82,6 +82,18 @@ def _request_with_retry(
                 time.sleep(wait_sec)
                 continue
 
+            if res.status_code >= 500:
+                wait_sec = 5 * attempt
+                logger.warning(
+                    "[request] server error attempt=%s url=%s status=%s wait=%ss",
+                    attempt,
+                    url,
+                    res.status_code,
+                    wait_sec,
+                )
+                time.sleep(wait_sec)
+                continue
+
             res.raise_for_status()
             return res
 
@@ -97,7 +109,6 @@ def _request_with_retry(
             time.sleep(3 * attempt)
 
     raise last_error if last_error else RuntimeError("request failed")
-
 def _fetch_from_chart_api(code: str) -> dict | None:
     """
     Yahoo FinanceのチャートAPIから1ヶ月分の日足を取得する。
@@ -200,20 +211,14 @@ def _fetch_current_price_from_quote_page(code: str) -> float | None:
 
 def fetch_price_data(code: str) -> dict | None:
     """
-    優先順位:
     1. chart APIから現在値・1ヶ月安値・1ヶ月高値を取得
-    2. ダメなら現在値だけ取得
-       ただし month_low / month_high が無いと誤判定しやすいので None 扱い
+    2. 取れなければ None
     """
     chart_data = _fetch_from_chart_api(code)
     if chart_data is not None:
         return chart_data
 
-    fallback_price = _fetch_current_price_from_quote_page(code)
-    if fallback_price is None:
-        return None
-
-    logger.warning("[fetch_price_data] fallback current price only for %s", code)
+    logger.warning("[fetch_price_data] chart api unavailable for %s", code)
     return None
 
 
