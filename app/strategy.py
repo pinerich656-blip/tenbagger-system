@@ -99,15 +99,20 @@ def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
 def _extract_price_from_text(text: str, code: str) -> float | None:
     code_clean = code.replace(".T", "")
 
+    # コード付近だけを切り出す（超重要）
+    idx = text.find(code_clean)
+    if idx == -1:
+        return None
+
+    window = text[idx:idx + 1200]
+
     patterns = [
         rf"{re.escape(code_clean)}.*?\n([0-9,]+)\n前日比",
         rf"{re.escape(code_clean)}.*?([0-9,]+)\s*円",
-        r"([0-9,]+)\n前日比",
-        r"([0-9,]+)\s*円",
     ]
 
     for pattern in patterns:
-        m = re.search(pattern, text, re.DOTALL)
+        m = re.search(pattern, window, re.DOTALL)
         if m:
             try:
                 return round(float(m.group(1).replace(",", "")), 2)
