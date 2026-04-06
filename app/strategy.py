@@ -200,12 +200,25 @@ def _load_previous_state() -> dict[str, dict]:
         logger.warning("[state] load failed: %s", e)
         return {}
 
-def _save_current_state(results: list[StockAnalysis], change_map: dict[str, dict]) -> None:
+def _save_current_state(
+    results: list[StockAnalysis],
+    change_map: dict[str, dict],
+    previous_state: dict[str, dict] | None = None,
+) -> None:
     try:
+        prev = previous_state or {}
         payload: dict[str, dict] = {}
 
         for r in results:
             extra = change_map.get(r.code, {})
+            old = prev.get(r.code, {})
+
+            # 取得失敗なら前回の正常データを維持
+            if r.status == "取得失敗":
+                if old:
+                    payload[r.code] = old
+                continue
+
             payload[r.code] = {
                 "name": r.name,
                 "price": r.price,
@@ -221,7 +234,6 @@ def _save_current_state(results: list[StockAnalysis], change_map: dict[str, dict
 
     except Exception as e:
         logger.warning("[state] save failed: %s", e)
-
         
 
 
@@ -285,6 +297,14 @@ def build_notifications(
 
         # 初回は通知しない
         if old_price is None:
+            continue
+
+        # 取得失敗は通知しない
+        if r.status == "取得失敗":
+            continue
+
+        # 前回が取得失敗だった場合も通知しない
+        if old_status == "取得失敗":
             continue
 
         if r.status != old_status:
