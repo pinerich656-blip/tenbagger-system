@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from typing import Iterable
+import csv
+import io
 import json
 import logging
 import os
-import re
 import time
+from datetime import datetime
 
 import requests
-from bs4 import BeautifulSoup
 
 from .models import StockAnalysis, StockInput
 
@@ -39,24 +40,44 @@ session.headers.update(
 )
 
 STATE_FILE = os.getenv("STOCK_STATE_FILE", "stock_state.json")
-REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.5"))
+REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.0"))
 MAX_RETRY = int(os.getenv("FETCH_MAX_RETRY", "2"))
+LOOKBACK_DAYS = int(os.getenv("LOOKBACK_DAYS", "22"))  # 営業日ベースで約1か月
 
 
-def classify_price(price: float, buy_line: float, danger_line: float) -> str:
+def classify_price(price: float, buy_line: float, overheat_line: float) -> str:
     if price <= buy_line:
         return "買い候補"
-    if price >= danger_line:
-        return "危険"
+    if price >= overheat_line:
+        return "高値警戒"
     return "様子見"
 
 
-def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
+def _to_stooq_symbol(code: str) -> str:
+    # 2981.T -> 2981.jp
+    return code.replace(".T", "").lower() + ".jp"
+
+
+def _safe_float(value: str | None) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _request_with_retry(
+    url: str,
+    *,
+    timeout: int = 15,
+    params: dict | None = None,
+) -> requests.Response:
     last_error: Exception | None = None
 
     for attempt in range(1, MAX_RETRY + 2):
         try:
-            res = session.get(url, timeout=timeout)
+            res = session.get(url, params=params, timeout=timeout)
 
             if res.status_code == 429:
                 wait_sec = 5 * attempt
@@ -89,9 +110,10 @@ def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
         except Exception as e:
             last_error = e
             logger.warning(
-                "[request] failed attempt=%s url=%s error=%s",
+                "[request] failed attempt=%s url=%s params=%s error=%s",
                 attempt,
                 url,
+                params,
                 e,
             )
             time.sleep(2 * attempt)
@@ -101,45 +123,81 @@ def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
 
 def fetch_price_data(code: str) -> dict | None:
     """
-    Yahooファイナンス日本の個別ページから現在値を取得する。
-    ※ month_low / month_high は擬似計算
+    Stooq のCSV日足から現在値・1か月安値・1か月高値を取得する。
     """
     try:
         time.sleep(REQUEST_SLEEP_SEC)
 
-        code_clean = code.replace(".T", "")
-        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
+        symbol = _to_stooq_symbol(code)
+        url = "https://stooq.com/q/d/l/"
+        params = {
+            "s": symbol,
+            "i": "d",  # daily
+        }
 
-        res = _request_with_retry(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        text = soup.get_text("\n", strip=True)
+        res = _request_with_retry(url, timeout=15, params=params)
+        text = res.text.strip()
 
-        idx = text.find(code_clean)
-        if idx == -1:
-            logger.warning("[fetch_price_data] code not found in page text: %s", code)
+        if not text or "No data" in text:
+            logger.warning("[fetch_price_data] no csv data for %s (%s)", code, symbol)
             return None
 
-        window = text[idx:idx + 1500]
+        reader = csv.DictReader(io.StringIO(text))
+        rows = list(reader)
 
-        m = re.search(r"([0-9,]+)\n前日比", window)
-        if not m:
-            m = re.search(r"([0-9,]+)\s*円", window)
-        if not m:
-            logger.warning("[fetch_price_data] price regex miss for %s", code)
+        if not rows:
+            logger.warning("[fetch_price_data] empty csv rows for %s (%s)", code, symbol)
             return None
 
-        price = float(m.group(1).replace(",", ""))
+        parsed_rows: list[dict] = []
+        for row in rows:
+            date_str = row.get("Date")
+            close_v = _safe_float(row.get("Close"))
+            high_v = _safe_float(row.get("High"))
+            low_v = _safe_float(row.get("Low"))
 
-        # 仮の1ヶ月レンジ
-        # 完全な実測値ではないが、現行Render運用では止まりにくさを優先
-        month_low = round(price * 0.95, 2)
-        month_high = round(price * 1.05, 2)
+            if not date_str or close_v is None or high_v is None or low_v is None:
+                continue
+
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+
+            parsed_rows.append(
+                {
+                    "date": dt,
+                    "close": close_v,
+                    "high": high_v,
+                    "low": low_v,
+                }
+            )
+
+        if not parsed_rows:
+            logger.warning("[fetch_price_data] no valid rows for %s (%s)", code, symbol)
+            return None
+
+        parsed_rows.sort(key=lambda x: x["date"])
+        recent = parsed_rows[-LOOKBACK_DAYS:]
+
+        if len(recent) < 5:
+            logger.warning(
+                "[fetch_price_data] insufficient recent rows for %s (%s): %s",
+                code,
+                symbol,
+                len(recent),
+            )
+            return None
+
+        current_price = recent[-1]["close"]
+        month_low = min(r["low"] for r in recent)
+        month_high = max(r["high"] for r in recent)
 
         return {
-            "current_price": round(price, 2),
-            "month_low": month_low,
-            "month_high": month_high,
-            "source": "yahoo_quote_page",
+            "current_price": round(current_price, 2),
+            "month_low": round(month_low, 2),
+            "month_high": round(month_high, 2),
+            "source": "stooq_csv",
         }
 
     except Exception as e:
@@ -235,9 +293,12 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_high = float(price_data["month_high"])
 
         buy_line = round(month_low * 1.04, 2)
-        danger_line = round(max(month_high * 0.95, price * 1.10), 2)
+        overheat_line = round(month_high * 0.97, 2)
 
-        status = classify_price(price, buy_line, danger_line)
+        if overheat_line <= buy_line:
+            overheat_line = round(buy_line * 1.03, 2)
+
+        status = classify_price(price, buy_line, overheat_line)
 
         results.append(
             StockAnalysis(
@@ -245,7 +306,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
                 code=stock.code,
                 price=round(price, 2),
                 fair_price=buy_line,
-                danger_price=danger_line,
+                danger_price=overheat_line,
                 status=status,
             )
         )
