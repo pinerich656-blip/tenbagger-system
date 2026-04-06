@@ -79,4 +79,4 @@ def run_buy_check(key: str):
 
 @app.get("/version")
 def version():
-    return {"version": "debug-2026-04-06-2"}
+    return {"version": "debug-2026-04-06-quote-1"}
