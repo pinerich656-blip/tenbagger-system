@@ -99,7 +99,6 @@ def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
 def _extract_price_from_text(text: str, code: str) -> float | None:
     code_clean = code.replace(".T", "")
 
-    # コード付近だけを切り出す（超重要）
     idx = text.find(code_clean)
     if idx == -1:
         return None
@@ -120,76 +119,6 @@ def _extract_price_from_text(text: str, code: str) -> float | None:
                 continue
 
     return None
-
-
-def _fetch_from_yahoo_jp(code: str) -> float | None:
-    code_clean = code.replace(".T", "")
-    url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
-
-    res = _request_with_retry(url, timeout=10)
-    soup = BeautifulSoup(res.text, "html.parser")
-    text = soup.get_text("\n", strip=True)
-
-    price = _extract_price_from_text(text, code)
-    if price is None:
-        logger.warning("[_fetch_from_yahoo_jp] price regex miss for %s", code)
-    return price
-
-
-def _fetch_from_yahoo_com(code: str) -> float | None:
-    url = f"https://finance.yahoo.com/quote/{code}"
-
-    res = _request_with_retry(url, timeout=10)
-    text = BeautifulSoup(res.text, "html.parser").get_text("\n", strip=True)
-
-    patterns = [
-        r"current price is\s*([0-9,]+\.[0-9]+)",
-        r"Previous Close\s*([0-9,]+\.[0-9]+)",
-        r"Open\s*([0-9,]+\.[0-9]+)",
-        r"([0-9,]+\.[0-9]+)",
-    ]
-
-    for pattern in patterns:
-        m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-        if m:
-            try:
-                return round(float(m.group(1).replace(",", "")), 2)
-            except ValueError:
-                continue
-
-    logger.warning("[_fetch_from_yahoo_com] price regex miss for %s", code)
-    return None
-
-
-def fetch_current_price(code: str) -> float | None:
-    """
-    1. Yahooファイナンス日本の個別ページ
-    2. ダメなら Yahoo.com の個別ページ
-    """
-    try:
-        time.sleep(REQUEST_SLEEP_SEC)
-
-        try:
-            price = _fetch_from_yahoo_jp(code)
-            if price is not None:
-                return price
-        except Exception as e:
-            logger.warning("[fetch_current_price] yahoo_jp failed for %s: %s", code, e)
-
-        time.sleep(REQUEST_SLEEP_SEC)
-
-        try:
-            price = _fetch_from_yahoo_com(code)
-            if price is not None:
-                return price
-        except Exception as e:
-            logger.warning("[fetch_current_price] yahoo_com failed for %s: %s", code, e)
-
-        return None
-
-    except Exception as e:
-        logger.warning("[fetch_current_price] failed for %s: %s", code, e)
-        return None
 
 
 def _load_previous_state() -> dict[str, dict]:
