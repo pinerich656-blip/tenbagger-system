@@ -38,7 +38,7 @@ session.headers.update(
 )
 
 STATE_FILE = os.getenv("STOCK_STATE_FILE", "stock_state.json")
-REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.2"))
+REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "3.0"))
 MAX_RETRY = int(os.getenv("FETCH_MAX_RETRY", "2"))
 
 
@@ -70,8 +70,21 @@ def _request_with_retry(
     for attempt in range(1, MAX_RETRY + 2):
         try:
             res = session.get(url, params=params, timeout=timeout)
+
+            if res.status_code == 429:
+                wait_sec = 8 * attempt
+                logger.warning(
+                    "[request] rate limited attempt=%s url=%s wait=%ss",
+                    attempt,
+                    url,
+                    wait_sec,
+                )
+                time.sleep(wait_sec)
+                continue
+
             res.raise_for_status()
             return res
+
         except Exception as e:
             last_error = e
             logger.warning(
@@ -81,10 +94,9 @@ def _request_with_retry(
                 params,
                 e,
             )
-            time.sleep(min(2 * attempt, 5))
+            time.sleep(3 * attempt)
 
     raise last_error if last_error else RuntimeError("request failed")
-
 
 def _fetch_from_chart_api(code: str) -> dict | None:
     """
