@@ -4,6 +4,7 @@ from typing import Iterable
 import json
 import logging
 import os
+import re
 import time
 
 import requests
@@ -38,41 +39,27 @@ session.headers.update(
 )
 
 STATE_FILE = os.getenv("STOCK_STATE_FILE", "stock_state.json")
-REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "3.0"))
+REQUEST_SLEEP_SEC = float(os.getenv("REQUEST_SLEEP_SEC", "1.5"))
 MAX_RETRY = int(os.getenv("FETCH_MAX_RETRY", "2"))
 
 
-def classify_price(price: float, buy_line: float, overheat_line: float) -> str:
+def classify_price(price: float, buy_line: float, danger_line: float) -> str:
     if price <= buy_line:
         return "買い候補"
-    if price >= overheat_line:
-        return "高値警戒"
+    if price >= danger_line:
+        return "危険"
     return "様子見"
 
 
-def _safe_float(value) -> float | None:
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _request_with_retry(
-    url: str,
-    *,
-    timeout: int = 10,
-    params: dict | None = None,
-) -> requests.Response:
+def _request_with_retry(url: str, *, timeout: int = 10) -> requests.Response:
     last_error: Exception | None = None
 
     for attempt in range(1, MAX_RETRY + 2):
         try:
-            res = session.get(url, params=params, timeout=timeout)
+            res = session.get(url, timeout=timeout)
 
             if res.status_code == 429:
-                wait_sec = 8 * attempt
+                wait_sec = 5 * attempt
                 last_error = RuntimeError(f"429 Too Many Requests: {url}")
                 logger.warning(
                     "[request] rate limited attempt=%s url=%s wait=%ss",
@@ -84,7 +71,7 @@ def _request_with_retry(
                 continue
 
             if res.status_code >= 500:
-                wait_sec = 5 * attempt
+                wait_sec = 4 * attempt
                 last_error = RuntimeError(f"{res.status_code} Server Error: {url}")
                 logger.warning(
                     "[request] server error attempt=%s url=%s status=%s wait=%ss",
@@ -102,126 +89,62 @@ def _request_with_retry(
         except Exception as e:
             last_error = e
             logger.warning(
-                "[request] failed attempt=%s url=%s params=%s error=%s",
+                "[request] failed attempt=%s url=%s error=%s",
                 attempt,
                 url,
-                params,
                 e,
             )
-            time.sleep(3 * attempt)
+            time.sleep(2 * attempt)
 
     raise last_error if last_error else RuntimeError("request failed")
-def _fetch_from_chart_api(code: str) -> dict | None:
-    """
-    Yahoo FinanceのチャートAPIから1ヶ月分の日足を取得する。
-    """
-    try:
-        time.sleep(REQUEST_SLEEP_SEC)
-
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{code}"
-        params = {
-            "interval": "1d",
-            "range": "1mo",
-            "includePrePost": "false",
-            "events": "div,splits",
-        }
-
-        res = _request_with_retry(url, timeout=12, params=params)
-        data = res.json()
-
-        result = data.get("chart", {}).get("result", [])
-        if not result:
-            logger.warning("[chart_api] no result for %s", code)
-            return None
-
-        item = result[0]
-        quotes = item.get("indicators", {}).get("quote", [])
-        if not quotes:
-            logger.warning("[chart_api] no quotes for %s", code)
-            return None
-
-        quote = quotes[0]
-        closes = quote.get("close", [])
-        highs = quote.get("high", [])
-        lows = quote.get("low", [])
-
-        close_vals = [_safe_float(x) for x in closes]
-        high_vals = [_safe_float(x) for x in highs]
-        low_vals = [_safe_float(x) for x in lows]
-
-        close_vals = [x for x in close_vals if x is not None]
-        high_vals = [x for x in high_vals if x is not None]
-        low_vals = [x for x in low_vals if x is not None]
-
-        if not close_vals or not high_vals or not low_vals:
-            logger.warning("[chart_api] insufficient OHLC for %s", code)
-            return None
-
-        current_price = close_vals[-1]
-        month_low = min(low_vals)
-        month_high = max(high_vals)
-
-        return {
-            "current_price": round(current_price, 2),
-            "month_low": round(month_low, 2),
-            "month_high": round(month_high, 2),
-            "source": "chart_api",
-        }
-
-    except Exception as e:
-        logger.warning("[chart_api] failed for %s: %s", code, e)
-        return None
-
-
-def _fetch_current_price_from_quote_page(code: str) -> float | None:
-    """
-    最終フォールバック。現在値だけ取得する。
-    """
-    try:
-        code_clean = code.replace(".T", "")
-        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
-
-        time.sleep(REQUEST_SLEEP_SEC)
-        res = _request_with_retry(url, timeout=10)
-
-        soup = BeautifulSoup(res.text, "html.parser")
-        text = soup.get_text("\n", strip=True)
-
-        import re
-
-        idx = text.find(code_clean)
-        if idx == -1:
-            logger.warning("[quote_page] code not found in page text: %s", code)
-            return None
-
-        window = text[idx:idx + 1200]
-
-        m = re.search(r"([0-9,]+)\n前日比", window)
-        if not m:
-            m = re.search(r"([0-9,]+)\s*円", window)
-
-        if not m:
-            logger.warning("[quote_page] price regex miss: %s", code)
-            return None
-
-        return float(m.group(1).replace(",", ""))
-
-    except Exception as e:
-        logger.warning("[quote_page] failed for %s: %s", code, e)
-        return None
 
 
 def fetch_price_data(code: str) -> dict | None:
     """
-    1. chart APIから現在値・1ヶ月安値・1ヶ月高値を取得
-    2. 取れなければ None
+    Yahooファイナンス日本の個別ページから現在値を取得する。
+    ※ month_low / month_high は擬似計算
     """
-    chart_data = _fetch_from_chart_api(code)
-    if chart_data is not None:
-        return chart_data
+    try:
+        time.sleep(REQUEST_SLEEP_SEC)
 
-    logger.warning("[fetch_price_data] chart api unavailable for %s", code)
-    return None
+        code_clean = code.replace(".T", "")
+        url = f"https://finance.yahoo.co.jp/quote/{code_clean}"
+
+        res = _request_with_retry(url, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        text = soup.get_text("\n", strip=True)
+
+        idx = text.find(code_clean)
+        if idx == -1:
+            logger.warning("[fetch_price_data] code not found in page text: %s", code)
+            return None
+
+        window = text[idx:idx + 1500]
+
+        m = re.search(r"([0-9,]+)\n前日比", window)
+        if not m:
+            m = re.search(r"([0-9,]+)\s*円", window)
+        if not m:
+            logger.warning("[fetch_price_data] price regex miss for %s", code)
+            return None
+
+        price = float(m.group(1).replace(",", ""))
+
+        # 仮の1ヶ月レンジ
+        # 完全な実測値ではないが、現行Render運用では止まりにくさを優先
+        month_low = round(price * 0.95, 2)
+        month_high = round(price * 1.05, 2)
+
+        return {
+            "current_price": round(price, 2),
+            "month_low": month_low,
+            "month_high": month_high,
+            "source": "yahoo_quote_page",
+        }
+
+    except Exception as e:
+        logger.warning("[fetch_price_data] failed for %s: %s", code, e)
+        return None
 
 
 def _load_previous_state() -> dict[str, dict]:
@@ -231,9 +154,7 @@ def _load_previous_state() -> dict[str, dict]:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict):
-            return data
-        return {}
+        return data if isinstance(data, dict) else {}
     except Exception as e:
         logger.warning("[state] load failed: %s", e)
         return {}
@@ -253,6 +174,7 @@ def _save_current_state(results: list[StockAnalysis]) -> None:
 
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+
     except Exception as e:
         logger.warning("[state] save failed: %s", e)
 
@@ -269,7 +191,6 @@ def build_notifications(
         old_status = old.get("status")
         old_price = old.get("price")
 
-        # 初回は通知しない
         if old_status is None:
             continue
 
@@ -314,12 +235,9 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
         month_high = float(price_data["month_high"])
 
         buy_line = round(month_low * 1.04, 2)
-        overheat_line = round(month_high * 0.97, 2)
+        danger_line = round(max(month_high * 0.95, price * 1.10), 2)
 
-        if overheat_line <= buy_line:
-            overheat_line = round(buy_line * 1.03, 2)
-
-        status = classify_price(price, buy_line, overheat_line)
+        status = classify_price(price, buy_line, danger_line)
 
         results.append(
             StockAnalysis(
@@ -327,7 +245,7 @@ def analyze_stocks(stocks: Iterable[StockInput] | None = None) -> list[StockAnal
                 code=stock.code,
                 price=round(price, 2),
                 fair_price=buy_line,
-                danger_price=overheat_line,
+                danger_price=danger_line,
                 status=status,
             )
         )
