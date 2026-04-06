@@ -73,6 +73,7 @@ def _request_with_retry(
 
             if res.status_code == 429:
                 wait_sec = 8 * attempt
+                last_error = RuntimeError(f"429 Too Many Requests: {url}")
                 logger.warning(
                     "[request] rate limited attempt=%s url=%s wait=%ss",
                     attempt,
@@ -84,6 +85,7 @@ def _request_with_retry(
 
             if res.status_code >= 500:
                 wait_sec = 5 * attempt
+                last_error = RuntimeError(f"{res.status_code} Server Error: {url}")
                 logger.warning(
                     "[request] server error attempt=%s url=%s status=%s wait=%ss",
                     attempt,
