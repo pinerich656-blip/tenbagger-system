@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
-from .strategy import analyze_stocks
+from .strategy import analyze_stocks, analyze_and_collect_notifications
 from .notifications import send_line_push
 
 app = FastAPI(title="Tenbagger System API")
 
-SECRET_KEY = "buycheck_2026_yutaka_9x7pL2"
+SECRET_KEY = os.getenv("SECRET_KEY", "buycheck_2026_yutaka_9x7pL2")
 
 
 @app.get("/")
@@ -38,13 +40,6 @@ def buy_candidates():
         if item.status == "買い候補"
     ]
 
-    if buys:
-        msg = "【買い候補】\n"
-        for b in buys:
-            msg += f"{b['name']} ({b['code']}) {b['price']}円\n"
-
-        send_line_push(msg)
-
     return JSONResponse(content=buys, media_type="application/json; charset=utf-8")
 
 
@@ -62,7 +57,11 @@ def run_buy_check(key: str):
     if key != SECRET_KEY:
         return {"error": "unauthorized"}
 
-    results = analyze_stocks()
+    results, notifications = analyze_and_collect_notifications()
+
+    if notifications:
+        msg = "【Tenbagger 通知】\n" + "\n".join(notifications)
+        send_line_push(msg)
 
     buys = [
         item.model_dump()
@@ -70,15 +69,14 @@ def run_buy_check(key: str):
         if item.status == "買い候補"
     ]
 
-    if buys:
-        msg = "【買い候補】\n"
-        for b in buys:
-            msg += f"{b['name']} ({b['code']}) {b['price']}円\n"
+    return {
+        "notification_count": len(notifications),
+        "notifications": notifications,
+        "buy_count": len(buys),
+        "items": buys,
+    }
 
-        send_line_push(msg)
-
-    return {"count": len(buys), "items": buys}
 
 @app.get("/version")
 def version():
-    return {"version": "debug-2026-04-01-1"}
+    return {"version": "debug-2026-04-06-2"}
