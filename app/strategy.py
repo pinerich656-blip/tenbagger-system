@@ -435,12 +435,12 @@ def analyze_and_collect_notifications(
             )
         )
 
-        change_map[stock.code] = {
+                change_map[stock.code] = {
             "prev_price": prev_price,
             "change_pct": change_pct,
         }
 
-        results = _sanitize_results(results)
+    results = _sanitize_results(results)
     notifications = build_notifications(results, previous_state, change_map)
     _save_current_state(results, change_map, previous_state)
     return results, notifications
