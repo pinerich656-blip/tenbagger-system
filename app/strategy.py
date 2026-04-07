@@ -224,7 +224,7 @@ def _sanitize_results(results: list[StockAnalysis]) -> list[StockAnalysis]:
     # 同じ価格が3件以上あれば異常とみなす
     suspicious_indexes: set[int] = set()
     for price, indexes in price_map.items():
-        if len(indexes) >= 3:
+        if len(indexes) >= 2:
             suspicious_indexes.update(indexes)
             logger.warning(
                 "[sanitize] suspicious duplicated price detected: price=%s count=%s",
