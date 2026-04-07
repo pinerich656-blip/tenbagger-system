@@ -435,7 +435,7 @@ def analyze_and_collect_notifications(
             )
         )
 
-                change_map[stock.code] = {
+        change_map[stock.code] = {
             "prev_price": prev_price,
             "change_pct": change_pct,
         }
